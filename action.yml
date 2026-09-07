@@ -1,0 +1,181 @@
+# ─── Agent Etna — the check a pull request actually needs ────────────────────
+#
+# "This PR changes the prompt. Here is what it breaks."
+#
+# REBUILT 2026-09-04. The previous version offered `test-count: 10` and
+# `security-scan: true` — it generated ten throwaway tests with an LLM on every
+# run and scanned for vulnerabilities. Both were cut from the product in July
+# 2026 (the standalone security scan on the 28th; scenario counts have been
+# utility-scaled and deliberately unquotable since 2026-08-29), so the one
+# public, discoverable artifact this project had was advertising a version of
+# Agent Etna that no longer exists.
+#
+# What replaced it is the thing that actually keeps agents unreliable, which is
+# narrower than "nobody tests". Every prompt fix is a BLIND GLOBAL EDIT: you
+# change the text to fix behaviour A with no idea what you did to B through Z.
+# There is no compiler, no type error, no locality. So teams stop editing, the
+# prompt calcifies, and known bugs ship forever because touching the file feels
+# riskier than the bug.
+#
+# Agent Etna has been accumulating every behaviour your agent ESTABLISHED —
+# durable, per agent, impossible to cold-start, which is exactly what a test
+# suite for a prompt would need and exactly what nobody can write by hand. This
+# action replays a slice of them against the instructions as they stand on this
+# PR's head, and answers as a rate, in the product's own words:
+#
+#     held 9 of 10  ·  1 flipped  ·  2 could not be tested
+#
+# THREE THINGS IT WILL NOT DO, all deliberate:
+#   · It never claims to have checked more than it did. The corpus rotates,
+#     least-recently-checked first, so the summary always says which slice out
+#     of how many established behaviours. It is not a guarantee and must never
+#     be presented as one.
+#   · A behaviour Etna could not replay is UNTESTED — counted in neither
+#     column and reported on its own line. A check that scored our own outage
+#     as your regression would be worse than no check: it would teach your team
+#     to ignore it.
+#   · A new agent with nothing established says so and stays GREEN. A red build
+#     meaning "we could not look" is the fastest way to get the green one
+#     ignored too.
+#
+# Usage:
+#
+#   - uses: AgentEtna/action@v1
+#     with:
+#       etna-api-key: ${{ secrets.ETNA_API_KEY }}
+#
+# That is the whole configuration. The repo and the head ref come from the
+# workflow context; the agent is whichever of yours is connected to this repo.
+
+name: "Agent Etna — what did this prompt change break?"
+description: "Replays the behaviours your agent already established against this PR's instructions, and reports what flipped."
+branding:
+  icon: "shield"
+  color: "orange"
+
+inputs:
+  etna-api-key:
+    description: "An Agent Etna API key with the 'test' scope. Settings → Keys."
+    required: true
+  agent-id:
+    description: "Only needed when more than one of your agents is connected to this repo."
+    required: false
+    default: ""
+  fail-on:
+    description: "'flipped' fails the build when an established behaviour breaks; 'never' reports and stays green."
+    required: false
+    default: "flipped"
+  etna-url:
+    description: "Base URL of the Agent Etna platform (only for a self-hosted deployment)."
+    required: false
+    default: "https://agentetna.com"
+
+outputs:
+  held:
+    description: "Established behaviours that still hold"
+    value: ${{ steps.check.outputs.held }}
+  flipped:
+    description: "Established behaviours this change broke"
+    value: ${{ steps.check.outputs.flipped }}
+  untested:
+    description: "Behaviours Etna could not replay — neither held nor flipped"
+    value: ${{ steps.check.outputs.untested }}
+  checked:
+    description: "How many behaviours were replayed"
+    value: ${{ steps.check.outputs.checked }}
+  established:
+    description: "How many this agent has established in total"
+    value: ${{ steps.check.outputs.established }}
+  summary:
+    description: "The one-line rate, e.g. 'held 9 of 10'"
+    value: ${{ steps.check.outputs.summary }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: What did this prompt change break?
+      id: check
+      shell: bash
+      env:
+        ETNA_API_KEY: ${{ inputs.etna-api-key }}
+        ETNA_URL: ${{ inputs.etna-url }}
+        AGENT_ID: ${{ inputs.agent-id }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        REPO: ${{ github.repository }}
+        # The PR head, or the pushed branch. This is the whole point: the
+        # instructions as this change leaves them, not as they are on main.
+        HEAD_REF: ${{ github.head_ref || github.ref_name }}
+      run: |
+        set -uo pipefail
+        ETNA_URL="${ETNA_URL:-https://agentetna.com}"
+        ETNA_URL="${ETNA_URL%/}"
+
+        BODY=$(jq -nc --arg r "$REPO" --arg f "$HEAD_REF" --arg a "$AGENT_ID" \
+          '{repo:$r, ref:$f} + (if $a == "" then {} else {agentId:$a} end)')
+
+        # -f is deliberately NOT used: this endpoint says WHY in the body on a
+        # 4xx (repo not connected, more than one agent, key missing a scope),
+        # and curl -f throws all of that away and reports exit 22. A CI log is
+        # the only debugging surface here, so the body is the valuable part.
+        HTTP=$(curl -sS -o /tmp/etna.json -w '%{http_code}' \
+          --max-time 900 --connect-timeout 20 \
+          "${ETNA_URL}/api/github-action/regression" \
+          -H "Authorization: Bearer ${ETNA_API_KEY}" \
+          -H "Content-Type: application/json" \
+          -d "$BODY") || HTTP="000"
+
+        if [ "$HTTP" = "000" ]; then
+          echo "::warning::Could not reach Agent Etna at ${ETNA_URL}. Not failing the build over our own outage."
+          exit 0
+        fi
+        if [ "$HTTP" -ge 400 ]; then
+          ERR=$(jq -r '.error // "unknown error"' /tmp/etna.json 2>/dev/null || echo "unknown error")
+          # A misconfigured check must not block a merge. It says what to fix,
+          # loudly, and gets out of the way — the same posture as the untested
+          # column: our problem is never reported as your regression.
+          echo "::warning::Agent Etna could not run this check (HTTP ${HTTP}): ${ERR}"
+          exit 0
+        fi
+
+        RAN=$(jq -r '.ran // false' /tmp/etna.json)
+        HELD=$(jq -r '.held // 0' /tmp/etna.json)
+        FLIPPED=$(jq -r '.flipped // 0' /tmp/etna.json)
+        UNTESTED=$(jq -r '.untested // 0' /tmp/etna.json)
+        CHECKED=$(jq -r '.checked // 0' /tmp/etna.json)
+        ESTABLISHED=$(jq -r '.established // 0' /tmp/etna.json)
+        SUMMARY=$(jq -r '.phrase // "nothing could be checked"' /tmp/etna.json)
+
+        {
+          echo "held=${HELD}"; echo "flipped=${FLIPPED}"; echo "untested=${UNTESTED}"
+          echo "checked=${CHECKED}"; echo "established=${ESTABLISHED}"; echo "summary=${SUMMARY}"
+        } >> "$GITHUB_OUTPUT"
+
+        if [ "$RAN" != "true" ]; then
+          REASON=$(jq -r '.reason // "nothing established for this agent yet"' /tmp/etna.json)
+          echo "### Agent Etna" >> "$GITHUB_STEP_SUMMARY"
+          echo "Nothing to check yet — ${REASON}." >> "$GITHUB_STEP_SUMMARY"
+          echo "Run a simulation or two and this check starts having something to say." >> "$GITHUB_STEP_SUMMARY"
+          echo "Agent Etna: nothing to check yet — ${REASON}"
+          exit 0
+        fi
+
+        {
+          echo "### Agent Etna — ${SUMMARY}"
+          echo ""
+          echo "Replayed **${CHECKED}** of this agent's **${ESTABLISHED}** established behaviours against the instructions on \`${HEAD_REF}\`."
+          [ "$UNTESTED" -gt 0 ] && echo "" && echo "_${UNTESTED} could not be tested, so they are counted in neither column._"
+          if [ "$FLIPPED" -gt 0 ]; then
+            echo ""
+            echo "**${FLIPPED} this change broke:**"
+            echo ""
+            jq -r '.broke[] | "- **\(.title // .capabilityId // .scenarioId // "behaviour")** — \(.reason // "no reason recorded")" + (if (.checks // 0) > 3 and (.failuresSince // 0) <= 1 then "  \n  _first failure in \(.checks) checks — could be a flicker; a re-run tells you which._" else "" end)' /tmp/etna.json
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        echo "Agent Etna: ${SUMMARY} · ${FLIPPED} flipped · ${UNTESTED} untested"
+
+        if [ "$FLIPPED" -gt 0 ] && [ "$FAIL_ON" = "flipped" ]; then
+          jq -r '.broke[] | "::error title=Agent Etna::\(.title // .capabilityId // "A behaviour") no longer holds — \(.reason // "no reason recorded")"' /tmp/etna.json
+          exit 1
+        fi
+        exit 0
