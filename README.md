@@ -71,6 +71,15 @@ job summary, and each broken behaviour is annotated on the run.
 If Agent Etna cannot be reached, or the check is misconfigured, the run warns
 and stays green. It says what to fix and gets out of the way.
 
+## Where agents actually fail
+
+Agents fail in the **harness** (boot, tools, memory, loop, guardrails), not the
+model. If you want a staging look at where yours breaks:
+
+- [Request an agent audit](https://github.com/AgentEtna/action/issues/new?template=audit-request.yml) — open an issue with the audit template
+- [Book 15 min](https://cal.com/agententafounder/15min) — short call
+- [How agents fail](https://huggingface.co/datasets/AgentEtna/how-agents-fail) — public failure-mode taxonomy on Hugging Face
+
 ## Documentation
 
 [agentetna.com/docs.html#github-action](https://agentetna.com/docs.html#github-action)
