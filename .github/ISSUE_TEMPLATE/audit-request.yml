@@ -1,0 +1,73 @@
+name: Request an agent audit
+description: Where your agent breaks in the harness — we route this for a staging look.
+title: "[Audit] "
+labels: ["audit-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Agents fail in the **harness** (boot, tools, memory, loop, guardrails), not the model.
+
+        File this and we’ll follow up. Prefer a call? [Book 15 min](https://cal.com/agententafounder/15min) · [Pricing](https://agentetna.com/pricing)
+  - type: textarea
+    id: agent_brief
+    attributes:
+      label: Agent brief + stack/runtime
+      description: What the agent does, language/runtime, and how it is started (HTTP, CLI, IDE, etc.).
+      placeholder: e.g. Support agent on Node/TypeScript, OpenAI tools, served over HTTP on /chat
+    validations:
+      required: true
+  - type: dropdown
+    id: primary_seam
+    attributes:
+      label: Primary seam
+      description: Where it usually fails first.
+      options:
+        - boot
+        - tools
+        - memory
+        - loop
+        - guardrails
+        - unsure
+    validations:
+      required: true
+  - type: textarea
+    id: what_broke
+    attributes:
+      label: What broke
+      description: Expected vs actual at that seam. Concrete beats vague.
+      placeholder: e.g. Tool timeout — agent retries forever instead of surfacing the failure
+    validations:
+      required: true
+  - type: input
+    id: repo
+    attributes:
+      label: Repo / minimal repro
+      description: Public repo URL, or the smallest way to reproduce.
+      placeholder: https://github.com/org/agent
+    validations:
+      required: true
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: Desired outcome
+      options:
+        - discovery
+        - demo
+        - pilot interest
+    validations:
+      required: true
+  - type: input
+    id: contact
+    attributes:
+      label: Contact
+      description: Email or preferred channel.
+    validations:
+      required: true
+  - type: input
+    id: timeline
+    attributes:
+      label: Timeline
+      description: When you need this (e.g. this week, this month, exploratory).
+    validations:
+      required: true
