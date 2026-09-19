@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Book a 15-minute demo
+    url: https://cal.com/agententafounder/15min
+    about: Talk through staging your agent.
+  - name: Pricing
+    url: https://agentetna.com/pricing
+    about: Free, $249, $399, and the Staging Pilot.
+  - name: How agents fail (public taxonomy)
+    url: https://huggingface.co/datasets/AgentEtna/how-agents-fail
+    about: Shared vocabulary for harness failure modes.
